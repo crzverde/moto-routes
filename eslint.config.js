@@ -24,20 +24,34 @@ export default tseslint.config(
       '@typescript-eslint/prefer-readonly': 'error',
       '@typescript-eslint/switch-exhaustiveness-check': 'error',
       '@typescript-eslint/consistent-type-imports': 'error',
-      '@typescript-eslint/no-unnecessary-condition': 'off', // Demasiado estricto para tests con shadowRoot
-      '@typescript-eslint/no-non-null-assertion': 'off', // shadowRoot! es un patrón válido en Web Components
-      '@typescript-eslint/no-unnecessary-type-parameters': 'off', // emit<T> es un patrón válido
+      '@typescript-eslint/no-unnecessary-condition': 'off',
+      '@typescript-eslint/no-non-null-assertion': 'off',
+      '@typescript-eslint/no-unnecessary-type-parameters': 'off',
       'no-console': 'warn',
       'prefer-const': 'error',
       'no-var': 'error',
-      'no-eval': 'error', // Tauri CSP: no eval permitido
+      'no-eval': 'error',
 
-      // ─── Límites de tamaño ───────────────────────────────────────
-      'max-lines': ['warn', { max: 300, skipComments: true, skipBlankLines: true }],
-      'max-lines-per-function': ['warn', { max: 60, skipComments: true, skipBlankLines: true }],
-      'max-depth': ['warn', { max: 3 }],
-      'max-params': ['warn', { max: 4 }],
-      'max-statements': ['warn', { max: 25 }],
+      // ─── Límites de tamaño (error) ─────────────────────────────────
+      'max-lines': ['error', { max: 300, skipComments: true, skipBlankLines: true }],
+      'max-lines-per-function': ['error', { max: 60, skipComments: true, skipBlankLines: true }],
+      'max-depth': ['error', { max: 3 }],
+      'max-params': ['error', { max: 4 }],
+      'max-statements': ['error', { max: 25 }],
+    },
+  },
+  // ─── Excepciones para tests y Cypress ──────────────────────────────
+  {
+    files: ['**/*.spec.ts', '**/*.cy.ts', 'cypress/**/*.ts', 'cypress.config.ts'],
+    rules: {
+      'max-lines': 'off',
+      'max-lines-per-function': 'off',
+      'max-depth': 'off',
+      'max-params': 'off',
+      'max-statements': 'off',
+      '@typescript-eslint/no-non-null-assertion': 'off',
+      '@typescript-eslint/no-unnecessary-condition': 'off',
+      '@typescript-eslint/no-explicit-any': 'off',
     },
   },
 );
