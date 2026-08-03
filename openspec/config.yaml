@@ -89,9 +89,18 @@ rules:
 
   design:
     - >-
-      Las decisiones de arquitectura duraderas viven en memory/decisions.md como ADR
-      numerada. En design.md se registra la decisión y se enlaza la ADR — no se duplica
-      su contenido. Si el cambio introduce una decisión nueva de ese calado, crear la ADR.
+      Las decisiones duraderas viven en memory/decisions.md como ADR numerada; en design.md
+      se registra la decisión y se enlaza la ADR, nunca se duplica su contenido.
+      **Merece ADR** lo que cumpla al menos uno: revertirlo dentro de un año obligaría a
+      tocar varios módulos, migrar datos o rehacer el flujo de trabajo; se evaluaron
+      alternativas reales y se descartaron; o se descubrió algo contraintuitivo que el
+      código no muestra y que alguien razonable desharía al "limpiar".
+      **No merece ADR** el estilo o la nomenclatura (eso es config del linter), el detalle
+      de cómo se implementó algo (eso es el código y sus tests), el estado o la narrativa
+      de la sesión (eso es memory/context.md y review.md), ni una decisión sin alternativa
+      real. Una ADR = una decisión, redactada aquí y no al archivar, en una pantalla:
+      contexto, decisión, alternativas descartadas y consecuencias. Las ADRs aceptadas no
+      se editan — se superseden con una nueva.
     - >-
       Toda dependencia nueva (npm o Cargo) requiere justificación explícita en Decisions,
       con la alternativa nativa que se descarta y por qué. La política es dependencias
@@ -202,5 +211,9 @@ operations:
         "se ve bien" sin evidencia. Revisar solo lo que el cambio abarca — no proponer
         funcionalidad nueva durante la revisión.
       - >-
-        Al archivar, actualizar memory/context.md con el estado resultante y añadir la ADR
-        a memory/decisions.md si el cambio tomó alguna decisión de arquitectura nueva.
+        Al archivar, actualizar memory/context.md con el estado resultante. La ADR no se
+        redacta aquí: se escribe en design.md durante propose, con las alternativas todavía
+        vivas. Al archivar solo se verifica que la decisión quedó registrada, y se añade una
+        ADR nueva únicamente si surgió de verdad durante apply — el criterio de qué merece
+        ADR es el mismo de rules.design. Si una ADR ya aceptada resultó desmentida por la
+        implementación, se anota la desviación en una ADR nueva, nunca editando la anterior.
