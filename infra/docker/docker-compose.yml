@@ -16,6 +16,37 @@ services:
     ports:
       - "5432:5432"
 
+  minio:
+    image: minio/minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+
+  # Crea el bucket una vez y termina — la imagen oficial minio/minio no trae
+  # ningún equivalente al docker-entrypoint-initdb.d de postgres para esto.
+  # En producción el bucket ya existía de antes (ADR-041/042) y las
+  # credenciales reales de apps/api están acotadas solo a ese bucket, sin
+  # permiso de crear buckets nuevos — este paso es solo para desarrollo local.
+  minio-init:
+    image: minio/mc
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MC_HOST_local: http://${MINIO_ROOT_USER}:${MINIO_ROOT_PASSWORD}@minio:9000
+    entrypoint: ["mc", "mb", "--ignore-existing", "local/${MINIO_BUCKET}"]
+
   api:
     build:
       context: ../../apps/api
@@ -25,11 +56,19 @@ services:
       RESEND_API_KEY: ${RESEND_API_KEY}
       RESEND_FROM_ADDRESS: ${RESEND_FROM_ADDRESS}
       PUBLIC_API_BASE_URL: ${PUBLIC_API_BASE_URL}
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+      MINIO_BUCKET: ${MINIO_BUCKET}
+      PHOTO_ENCRYPTION_KEY: ${PHOTO_ENCRYPTION_KEY}
     depends_on:
       postgres:
         condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
     ports:
       - "8080:8080"
 
 volumes:
   postgres-data:
+  minio-data:

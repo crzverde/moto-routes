@@ -4,8 +4,11 @@ package config
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"strings"
+
+	"github.com/crzverde/moto-routes/apps/api/internal/photos"
 )
 
 // Config es la configuración de arranque del servicio.
@@ -25,6 +28,17 @@ type Config struct {
 	// https:// — una URL relativa o sin esquema causó el incidente de
 	// ADR-036 con MOBILE_PROD_API_BASE_URL; aquí se rechaza en el arranque.
 	PublicAPIBaseURL string
+	// MinioEndpoint es host:puerto del servidor MinIO (sin esquema).
+	MinioEndpoint string
+	// MinioAccessKey/MinioSecretKey autentican contra MinIO. Secretos: sin valor por defecto.
+	MinioAccessKey string
+	MinioSecretKey string
+	// MinioBucket es el bucket donde se guardan las fotos de ruta.
+	MinioBucket string
+	// PhotoEncryptionKey cifra/descifra las fotos de ruta (AES-256-GCM, ver
+	// internal/photos). Es un secreto: sin valor por defecto, nunca vive
+	// junto a los datos que cifra (MinIO).
+	PhotoEncryptionKey []byte
 }
 
 // Load lee la configuración desde variables de entorno. DATABASE_URL,
@@ -66,12 +80,43 @@ func Load() (Config, error) {
 		host = "0.0.0.0"
 	}
 
+	minioEndpoint := os.Getenv("MINIO_ENDPOINT")
+	if minioEndpoint == "" {
+		return Config{}, errors.New("MINIO_ENDPOINT environment variable is required")
+	}
+	minioAccessKey := os.Getenv("MINIO_ACCESS_KEY")
+	if minioAccessKey == "" {
+		return Config{}, errors.New("MINIO_ACCESS_KEY environment variable is required")
+	}
+	minioSecretKey := os.Getenv("MINIO_SECRET_KEY")
+	if minioSecretKey == "" {
+		return Config{}, errors.New("MINIO_SECRET_KEY environment variable is required")
+	}
+	minioBucket := os.Getenv("MINIO_BUCKET")
+	if minioBucket == "" {
+		return Config{}, errors.New("MINIO_BUCKET environment variable is required")
+	}
+
+	photoEncryptionKeyEncoded := os.Getenv("PHOTO_ENCRYPTION_KEY")
+	if photoEncryptionKeyEncoded == "" {
+		return Config{}, errors.New("PHOTO_ENCRYPTION_KEY environment variable is required")
+	}
+	photoEncryptionKey, err := photos.DecodeKey(photoEncryptionKeyEncoded)
+	if err != nil {
+		return Config{}, fmt.Errorf("invalid PHOTO_ENCRYPTION_KEY: %w", err)
+	}
+
 	return Config{
-		DatabaseURL:       dbURL,
-		ServerAddress:     host + ":8080",
-		TokenSigningKey:   []byte(tokenSecret),
-		ResendAPIKey:      resendAPIKey,
-		ResendFromAddress: resendFromAddress,
-		PublicAPIBaseURL:  publicAPIBaseURL,
+		DatabaseURL:        dbURL,
+		ServerAddress:      host + ":8080",
+		TokenSigningKey:    []byte(tokenSecret),
+		ResendAPIKey:       resendAPIKey,
+		ResendFromAddress:  resendFromAddress,
+		PublicAPIBaseURL:   publicAPIBaseURL,
+		MinioEndpoint:      minioEndpoint,
+		MinioAccessKey:     minioAccessKey,
+		MinioSecretKey:     minioSecretKey,
+		MinioBucket:        minioBucket,
+		PhotoEncryptionKey: photoEncryptionKey,
 	}, nil
 }

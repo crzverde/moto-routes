@@ -187,10 +187,33 @@ jobs:
         working-directory: apps/api
         run: go build ./...
 
+      # MinIO no puede ser un `services:` declarativo como postgres: la imagen
+      # oficial minio/minio exige el argumento de comando `server /data` (sin
+      # él solo imprime el uso y termina), y el bloque `services:` de GitHub
+      # Actions no admite pasar argumentos de comando al contenedor — solo
+      # image/env/ports/options. Se levanta con `docker run` manual y se
+      # espera contra su endpoint de salud desde el propio runner (ver
+      # design.md D6 de almacenamiento-fotos-backend).
+      - name: Start MinIO
+        run: |
+          docker run -d --name minio -p 9000:9000 \
+            -e MINIO_ROOT_USER=motoroutes \
+            -e MINIO_ROOT_PASSWORD=motoroutes123 \
+            minio/minio server /data
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:9000/minio/health/live && exit 0
+            sleep 1
+          done
+          echo "MinIO did not become healthy in time" >&2
+          exit 1
+
       - name: go test
         working-directory: apps/api
         env:
           DATABASE_URL: postgres://motoroutes:motoroutes@localhost:5432/motoroutes
+          MINIO_ENDPOINT: localhost:9000
+          MINIO_ACCESS_KEY: motoroutes
+          MINIO_SECRET_KEY: motoroutes123
         run: go test ./...
 
       # go install ...@latest se reinstalaba desde cero en cada run -- el caché

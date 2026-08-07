@@ -15,6 +15,7 @@ import (
 	"github.com/crzverde/moto-routes/apps/api/internal/email"
 	"github.com/crzverde/moto-routes/apps/api/internal/httpmw"
 	"github.com/crzverde/moto-routes/apps/api/internal/migrate"
+	"github.com/crzverde/moto-routes/apps/api/internal/photos"
 	"github.com/crzverde/moto-routes/apps/api/internal/ping"
 	"github.com/crzverde/moto-routes/apps/api/internal/routes"
 	"github.com/crzverde/moto-routes/apps/api/internal/stoptypes"
@@ -130,6 +131,19 @@ func main() {
 
 	router.With(httpmw.PublicCORS, auth.RequireAuth(tokenIssuer)).Get("/api/routes/{id}", routes.DetailHandler(routeStore).ServeHTTP)
 	router.With(httpmw.PublicCORS).Options("/api/routes/{id}", func(http.ResponseWriter, *http.Request) {})
+
+	blobStore, err := photos.NewMinioBlobStore(cfg.MinioEndpoint, cfg.MinioAccessKey, cfg.MinioSecretKey, cfg.MinioBucket, false)
+	if err != nil {
+		log.Fatalf("failed to create MinIO client: %v", err)
+	}
+	photoStore := photos.PostgresPhotoStore{Pool: pool}
+	router.With(httpmw.PublicCORS, auth.RequireAuth(tokenIssuer)).Post("/api/routes/{id}/photos", photos.UploadHandler(photoStore, blobStore, cfg.PhotoEncryptionKey).ServeHTTP)
+	router.With(httpmw.PublicCORS, auth.RequireAuth(tokenIssuer)).Get("/api/routes/{id}/photos", photos.ListHandler(photoStore).ServeHTTP)
+	router.With(httpmw.PublicCORS).Options("/api/routes/{id}/photos", func(http.ResponseWriter, *http.Request) {})
+
+	router.With(httpmw.PublicCORS, auth.RequireAuth(tokenIssuer)).Get("/api/routes/{id}/photos/{photoId}", photos.DownloadHandler(photoStore, blobStore, cfg.PhotoEncryptionKey).ServeHTTP)
+	router.With(httpmw.PublicCORS, auth.RequireAuth(tokenIssuer)).Delete("/api/routes/{id}/photos/{photoId}", photos.DeleteHandler(photoStore, blobStore).ServeHTTP)
+	router.With(httpmw.PublicCORS).Options("/api/routes/{id}/photos/{photoId}", func(http.ResponseWriter, *http.Request) {})
 
 	log.Printf("listening on %s", cfg.ServerAddress)
 	if err := http.ListenAndServe(cfg.ServerAddress, router); err != nil {
