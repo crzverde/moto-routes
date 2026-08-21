@@ -64,4 +64,18 @@ describe('buildPhotosSection', () => {
 
     expect(capture.disabled).toBe(true);
   });
+
+  it('omits the <photo-capture> element when readOnly is true (ruta exclusiva de la nube)', () => {
+    const photos = [{ id: 'p1', objectUrl: 'blob:1' } as PhotoWithUrl];
+    const section = buildPhotosSection(photos, { onAddPhoto: vi.fn(), onSelectPhoto: vi.fn() }, vi.fn(), { readOnly: true });
+
+    expect(section.querySelector('[data-cy="detail-photo-capture"]')).toBeNull();
+    expect(section.querySelector('photo-gallery')).not.toBeNull();
+  });
+
+  it('renders the <photo-capture> element when readOnly is omitted (default false)', () => {
+    const section = buildPhotosSection([], { onAddPhoto: vi.fn(), onSelectPhoto: vi.fn() }, vi.fn());
+
+    expect(section.querySelector('[data-cy="detail-photo-capture"]')).not.toBeNull();
+  });
 });

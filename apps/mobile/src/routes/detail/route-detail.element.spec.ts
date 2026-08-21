@@ -10,6 +10,7 @@ import { pickFromGallery } from '../../shared/services/photo-capture-adapter.ser
 import type * as PhotoCaptureAdapter from '../../shared/services/photo-capture-adapter.service.js';
 import {
   uploadRouteToCloud, loadCloudRouteDetail, checkIfRouteIsSynced, autoResyncIfNeeded, uploadPhotoToCloud, deletePhotoFromCloud,
+  loadCloudRoutePhotos,
 } from './route-detail-cloud.service.js';
 import type * as RouteDetailCloudService from './route-detail-cloud.service.js';
 import { ROUTE_MAP_PHOTO_SELECT_EVENT, type RouteMapPhotoSelectDetail } from '../../shared/route-map/route-map.element.js';
@@ -26,6 +27,9 @@ vi.mock('./route-detail-cloud.service.js', async (importOriginal) => {
     ...actual,
     uploadRouteToCloud: vi.fn(),
     loadCloudRouteDetail: vi.fn(),
+    // Por defecto, ninguna foto y sin error — los tests que ejercitan la
+    // carga de fotos cloud-only lo sobrescriben explícitamente.
+    loadCloudRoutePhotos: vi.fn().mockResolvedValue({ photos: [], error: null }),
     checkIfRouteIsSynced: vi.fn().mockResolvedValue(false),
     autoResyncIfNeeded: vi.fn(),
     // uploadPhotoToCloud siempre devuelve una promesa real (nunca undefined):
@@ -1167,6 +1171,162 @@ describe('route-detail - ruta exclusiva de la nube', () => {
     expect(root.querySelector('.empty-msg')?.textContent).toContain('Ruta no encontrada');
     expect(loadCloudRouteDetail).not.toHaveBeenCalled();
     document.body.removeChild(el);
+  });
+
+  it('descarga las fotos en paralelo con el detalle y las muestra en la galería (spec route-cloud-sync)', async () => {
+    const cloudId = crypto.randomUUID();
+    vi.mocked(loadCloudRouteDetail).mockResolvedValue({
+      route: {
+        id: cloudId, createdAt: '2026-08-01T10:00:00.000Z', duration: 120, totalDistance: 30, avgSpeed: 40,
+        status: 'completed', visibility: 'private', origin: 'remote', previewPolyline: null,
+        name: 'Ruta con fotos en la nube', notes: null, isFavorite: false,
+      },
+      points: [{ id: 'p1', routeId: cloudId, timestamp: 1000, lat: 40.1, lng: -3.1, alt: 600, speed: 10 }],
+      stops: [],
+    });
+    vi.mocked(loadCloudRoutePhotos).mockResolvedValue({
+      photos: [{
+        id: 'photo-1', routeId: cloudId, filePath: 'cloud:photo-1', latitude: 40.1, longitude: -3.1,
+        capturedAt: '2026-08-01T10:05:00.000Z', createdAt: '2026-08-01T10:05:00.000Z', remotePhotoId: 'photo-1',
+        objectUrl: 'blob:cloud-photo-1',
+      }],
+      error: null,
+    });
+    const sessionRepository = new MemorySessionRepository();
+    await sessionRepository.save({ token: 'jwt-token', email: 'rider@example.com' });
+
+    const { el, root } = await mountRouteDetailWithSession(repo, cloudId, sessionRepository);
+
+    expect(loadCloudRoutePhotos).toHaveBeenCalledWith('http://localhost:8080', { token: 'jwt-token', email: 'rider@example.com' }, cloudId);
+    expect(galleryRoot(root).querySelectorAll('[data-cy="photo-thumbnail"]')).toHaveLength(1);
+    document.body.removeChild(el);
+  });
+
+  it('no muestra el botón de añadir foto en una ruta exclusiva de la nube (spec route-cloud-sync)', async () => {
+    const cloudId = crypto.randomUUID();
+    vi.mocked(loadCloudRouteDetail).mockResolvedValue({
+      route: {
+        id: cloudId, createdAt: '2026-08-01T10:00:00.000Z', duration: 120, totalDistance: 30, avgSpeed: 40,
+        status: 'completed', visibility: 'private', origin: 'remote', previewPolyline: null,
+        name: 'Ruta con fotos', notes: null, isFavorite: false,
+      },
+      points: [],
+      stops: [],
+    });
+    const sessionRepository = new MemorySessionRepository();
+    await sessionRepository.save({ token: 'jwt-token', email: 'rider@example.com' });
+
+    const { el, root } = await mountRouteDetailWithSession(repo, cloudId, sessionRepository);
+
+    expect(root.querySelector('[data-cy="detail-photo-capture"]')).toBeNull();
+    document.body.removeChild(el);
+  });
+
+  it('no muestra el botón de borrar en el visor a pantalla completa de una ruta exclusiva de la nube (spec route-cloud-sync)', async () => {
+    const cloudId = crypto.randomUUID();
+    vi.mocked(loadCloudRouteDetail).mockResolvedValue({
+      route: {
+        id: cloudId, createdAt: '2026-08-01T10:00:00.000Z', duration: 120, totalDistance: 30, avgSpeed: 40,
+        status: 'completed', visibility: 'private', origin: 'remote', previewPolyline: null,
+        name: 'Ruta con fotos', notes: null, isFavorite: false,
+      },
+      points: [],
+      stops: [],
+    });
+    vi.mocked(loadCloudRoutePhotos).mockResolvedValue({
+      photos: [{
+        id: 'photo-1', routeId: cloudId, filePath: 'cloud:photo-1', latitude: null, longitude: null,
+        capturedAt: '2026-08-01T10:05:00.000Z', createdAt: '2026-08-01T10:05:00.000Z', remotePhotoId: 'photo-1',
+        objectUrl: 'blob:cloud-photo-1',
+      }],
+      error: null,
+    });
+    const sessionRepository = new MemorySessionRepository();
+    await sessionRepository.save({ token: 'jwt-token', email: 'rider@example.com' });
+
+    const { el, root } = await mountRouteDetailWithSession(repo, cloudId, sessionRepository);
+    const thumbnail = galleryRoot(root).querySelector('[data-cy="photo-thumbnail"]') as HTMLElement;
+    thumbnail.click();
+
+    const viewer = document.body.querySelector('photo-viewer');
+    expect(viewer?.shadowRoot?.querySelector('[data-cy="photo-viewer-delete"]')).toBeNull();
+    viewer?.remove();
+    document.body.removeChild(el);
+  });
+
+  it('sin ninguna foto, la ruta exclusiva de la nube muestra el placeholder sin error (spec route-cloud-sync)', async () => {
+    const cloudId = crypto.randomUUID();
+    vi.mocked(loadCloudRouteDetail).mockResolvedValue({
+      route: {
+        id: cloudId, createdAt: '2026-08-01T10:00:00.000Z', duration: 120, totalDistance: 30, avgSpeed: 40,
+        status: 'completed', visibility: 'private', origin: 'remote', previewPolyline: null,
+        name: 'Ruta sin fotos', notes: null, isFavorite: false,
+      },
+      points: [],
+      stops: [],
+    });
+    vi.mocked(loadCloudRoutePhotos).mockResolvedValue({ photos: [], error: null });
+    const sessionRepository = new MemorySessionRepository();
+    await sessionRepository.save({ token: 'jwt-token', email: 'rider@example.com' });
+
+    const { el, root } = await mountRouteDetailWithSession(repo, cloudId, sessionRepository);
+
+    expect(galleryRoot(root).querySelector('[data-cy="photo-placeholder"]')).not.toBeNull();
+    expect(document.body.querySelector('[data-cy="photo-toast-error"]')).toBeNull();
+    document.body.removeChild(el);
+  });
+
+  it('si falla la descarga de fotos, el mapa y el timeline se muestran igual con un aviso discreto (spec route-cloud-sync)', async () => {
+    const cloudId = crypto.randomUUID();
+    vi.mocked(loadCloudRouteDetail).mockResolvedValue({
+      route: {
+        id: cloudId, createdAt: '2026-08-01T10:00:00.000Z', duration: 120, totalDistance: 30, avgSpeed: 40,
+        status: 'completed', visibility: 'private', origin: 'remote', previewPolyline: null,
+        name: 'Ruta con fotos', notes: null, isFavorite: false,
+      },
+      points: [{ id: 'p1', routeId: cloudId, timestamp: 1000, lat: 40.1, lng: -3.1, alt: 600, speed: 10 }],
+      stops: [],
+    });
+    vi.mocked(loadCloudRoutePhotos).mockResolvedValue({ photos: [], error: 'network down' });
+    const sessionRepository = new MemorySessionRepository();
+    await sessionRepository.save({ token: 'jwt-token', email: 'rider@example.com' });
+
+    const { el, root } = await mountRouteDetailWithSession(repo, cloudId, sessionRepository);
+
+    expect(root.querySelector('.detail-title')?.textContent).toBe('Ruta con fotos');
+    expect(root.querySelector('[data-cy="route-detail-load-error"]')).toBeNull();
+    expect(document.body.querySelector('[data-cy="photo-toast-error"]')?.textContent).toBe('network down');
+    document.body.removeChild(el);
+  });
+
+  it('al desmontar una ruta cloud-only con fotos, revoca también sus objectUrl (mismo mecanismo que las locales)', async () => {
+    const cloudId = crypto.randomUUID();
+    vi.mocked(loadCloudRouteDetail).mockResolvedValue({
+      route: {
+        id: cloudId, createdAt: '2026-08-01T10:00:00.000Z', duration: 120, totalDistance: 30, avgSpeed: 40,
+        status: 'completed', visibility: 'private', origin: 'remote', previewPolyline: null,
+        name: 'Ruta con fotos', notes: null, isFavorite: false,
+      },
+      points: [],
+      stops: [],
+    });
+    vi.mocked(loadCloudRoutePhotos).mockResolvedValue({
+      photos: [{
+        id: 'photo-1', routeId: cloudId, filePath: 'cloud:photo-1', latitude: null, longitude: null,
+        capturedAt: '2026-08-01T10:05:00.000Z', createdAt: '2026-08-01T10:05:00.000Z', remotePhotoId: 'photo-1',
+        objectUrl: 'blob:cloud-photo-1',
+      }],
+      error: null,
+    });
+    const sessionRepository = new MemorySessionRepository();
+    await sessionRepository.save({ token: 'jwt-token', email: 'rider@example.com' });
+    const revokeSpy = vi.spyOn(URL, 'revokeObjectURL');
+
+    const { el } = await mountRouteDetailWithSession(repo, cloudId, sessionRepository);
+    document.body.removeChild(el);
+
+    expect(revokeSpy).toHaveBeenCalledWith('blob:cloud-photo-1');
+    revokeSpy.mockRestore();
   });
 });
 

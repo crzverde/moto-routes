@@ -7,7 +7,7 @@ import type { Session } from '../../shared/models/session.types.js';
 import type { Route, RoutePoint, RouteStop } from '../../shared/models/route.types.js';
 import type { IStopTypesCacheRepository } from '../../shared/models/stop-types-cache.repository.js';
 import { getApiBaseUrl } from '../../shared/http/api-config.js';
-import { loadCloudRouteDetail, checkIfRouteIsSynced } from './route-detail-cloud.service.js';
+import { loadCloudRouteDetail, loadCloudRoutePhotos, checkIfRouteIsSynced } from './route-detail-cloud.service.js';
 import { uploadedPointsToLocal } from './route-detail-cloud.transform.js';
 import { triggerAutoResync, triggerPhotoUpload, triggerPhotoDelete, type SyncTriggerContext } from './route-detail-sync-triggers.js';
 import { buildLoadingState, buildEmptyMessage, buildLoadErrorMessage } from './route-detail-states.js';
@@ -32,6 +32,7 @@ import { APP_EVENTS, dispatchAppEvent } from '../../shared/app-events.js';
 import { buildBackButton } from '../../shared/back-button.js';
 import { buildPhotosSection, toGalleryPhotos } from './route-detail-photos-panel.js';
 import { openPhotoViewer } from '../../shared/photo-viewer/photo-viewer.element.js';
+import type { GalleryPhoto } from '../../shared/photo-gallery/photo-gallery.element.js';
 import '../../shared/tab-bar/tab-bar.element.js';
 import type { PhotoWithUrl, TabBarElement } from './route-detail.types.js';
 import { buildNotasPanel, saveRouteNote } from './route-detail-notes.js';
@@ -182,9 +183,12 @@ class RouteDetail extends BaseElement {
   }
 
   /**
-   * Ruta exclusiva de la nube (no existe en `IRouteRepository`): sin fotos
-   * (fuera de alcance, ver design.md) — un fallo de red se convierte en
-   * `_loadError`, nunca deja la pantalla en blanco ni sin explicación.
+   * Ruta exclusiva de la nube (no existe en `IRouteRepository`): puntos,
+   * paradas y fotos se descargan en paralelo (ver design.md, Decisión 4). Un
+   * fallo del detalle (puntos/paradas) se convierte en `_loadError`, nunca
+   * deja la pantalla en blanco ni sin explicación; un fallo solo de las
+   * fotos no bloquea el resto — se muestra igual con un aviso discreto (ver
+   * design.md, Decisión 1).
    */
   private async loadCloudRouteData(routeId: string, session: Session): Promise<void> {
     this._isLocalRoute = false;
@@ -192,7 +196,10 @@ class RouteDetail extends BaseElement {
     this.revokePhotoUrls();
     this._photos = [];
 
-    const result = await loadCloudRouteDetail(getApiBaseUrl(), session, routeId);
+    const [result, photosResult] = await Promise.all([
+      loadCloudRouteDetail(getApiBaseUrl(), session, routeId),
+      loadCloudRoutePhotos(getApiBaseUrl(), session, routeId),
+    ]);
     if (result.error !== undefined) {
       this._route = null;
       this._loadError = result.error;
@@ -202,6 +209,10 @@ class RouteDetail extends BaseElement {
     this._routePoints = result.points;
     this._points = result.points.map((p) => ({ lat: p.lat, lng: p.lng }));
     this._routeStops = result.stops;
+    this._photos = photosResult.photos;
+    if (photosResult.error !== null) {
+      showToast(photosResult.error, 'error');
+    }
   }
 
   protected render(): void {
@@ -242,7 +253,11 @@ class RouteDetail extends BaseElement {
     // a la foto pulsada (agrupar-fotos-proximidad-mapa), nunca la ruta completa.
     routeMap.addEventListener(ROUTE_MAP_PHOTO_SELECT_EVENT, ((event: CustomEvent<RouteMapPhotoSelectDetail>) => {
       const { photos, startIndex } = groupPhotosByProximity(this._photos, event.detail.photo.id);
-      openPhotoViewer({ photos: toGalleryPhotos(photos), startIndex, onDelete: (p) => this.handleDeletePhoto(p.id) });
+      openPhotoViewer({
+        photos: toGalleryPhotos(photos),
+        startIndex,
+        ...(this._isLocalRoute && { onDelete: (p: GalleryPhoto): Promise<boolean> => this.handleDeletePhoto(p.id) }),
+      });
     }) as EventListener);
     return routeMap;
   }
@@ -333,7 +348,11 @@ class RouteDetail extends BaseElement {
    * cuadrícula y la línea de tiempo (AC-011). El mapa abre solo la zona GPS-cercana
    * a la foto pulsada, ver `groupPhotosByProximity` en `buildMap`. */
   private openPhotoViewerAt(index: number): void {
-    openPhotoViewer({ photos: toGalleryPhotos(this._photos), startIndex: index, onDelete: (photo) => this.handleDeletePhoto(photo.id) });
+    openPhotoViewer({
+      photos: toGalleryPhotos(this._photos),
+      startIndex: index,
+      ...(this._isLocalRoute && { onDelete: (photo: GalleryPhoto): Promise<boolean> => this.handleDeletePhoto(photo.id) }),
+    });
   }
 
   private buildPhotosSection(): HTMLElement {
@@ -344,6 +363,7 @@ class RouteDetail extends BaseElement {
         onSelectPhoto: (index) => { this.openPhotoViewerAt(index); },
       },
       (el) => { this._photoCaptureEl = el; },
+      { readOnly: !this._isLocalRoute },
     );
   }
 

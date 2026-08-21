@@ -4,13 +4,14 @@ import type { Session } from '../../shared/models/session.types.js';
 import type { IPhotoRepository } from '../../shared/models/photo.repository.js';
 import type { Photo } from '../../shared/models/photo.types.js';
 import { uploadRoute, fetchCloudRouteDetail, fetchCloudRoutes, type UploadedRoutePoint } from '../../shared/http/route-cloud-api.service.js';
-import { uploadRoutePhoto, deleteRoutePhoto } from '../../shared/http/photo-cloud-api.service.js';
+import { uploadRoutePhoto, deleteRoutePhoto, listRoutePhotos, downloadRoutePhoto } from '../../shared/http/photo-cloud-api.service.js';
 import { checkAchievements } from '../../shared/http/achievement-api.service.js';
 import { readPhotoBlob } from '../../shared/services/photo-storage.service.js';
 import { toErrorMessage } from '../../shared/utils/errors.js';
 import { showToast } from '../../shared/feedback/toast.js';
 import { enqueueAchievementUnlock } from '../../shared/feedback/achievement-unlock-overlay.element.js';
 import { cloudRouteDetailToLocal } from './route-detail-cloud.transform.js';
+import type { PhotoWithUrl } from './route-detail.types.js';
 
 /**
  * Comprueba si la sincronización que acaba de terminar desbloqueó algún
@@ -190,5 +191,47 @@ export async function deletePhotoFromCloud(options: DeletePhotoFromCloudOptions)
     await deleteRoutePhoto(options.apiBaseUrl, options.session.token, options.routeId, options.remotePhotoId);
   } catch (err) {
     showToast(toErrorMessage(err, 'No se pudo borrar la foto de la nube'), 'error');
+  }
+}
+
+/** Resultado de {@link loadCloudRoutePhotos}: siempre resuelve, nunca lanza. */
+export interface CloudPhotosLoaded {
+  photos: PhotoWithUrl[];
+  /** Mensaje de fallo al listar o descargar, o `null` si todo fue bien. */
+  error: string | null;
+}
+
+/**
+ * Descarga las fotos de una ruta exclusiva de la nube (metadatos vía
+ * `GET /api/routes/{id}/photos`, bytes de cada una en paralelo vía
+ * `GET /api/routes/{id}/photos/{photoId}`), devolviendo `PhotoWithUrl[]` con
+ * `objectUrl` ya resuelto para mostrarlas en la misma galería/timeline que
+ * una ruta local. `filePath` se rellena con un valor sintético inerte
+ * (`cloud:${photoId}`) — esta foto no tiene fichero local, y ese campo solo
+ * se usa hoy para rutas locales (ver design.md, Decisión 2). Nunca lanza: un
+ * fallo al listar o al descargar cualquier foto se resuelve como lista vacía
+ * con un mensaje de error, para que el llamador muestre un aviso discreto sin
+ * bloquear el resto del detalle (ver design.md, Decisión 1).
+ */
+export async function loadCloudRoutePhotos(apiBaseUrl: string, session: Session, routeId: string): Promise<CloudPhotosLoaded> {
+  try {
+    const summaries = await listRoutePhotos(apiBaseUrl, session.token, routeId);
+    const photos = await Promise.all(summaries.map(async (summary): Promise<PhotoWithUrl> => {
+      const blob = await downloadRoutePhoto(apiBaseUrl, session.token, routeId, summary.id);
+      return {
+        id: summary.id,
+        routeId,
+        filePath: `cloud:${summary.id}`,
+        latitude: summary.latitude,
+        longitude: summary.longitude,
+        capturedAt: summary.capturedAt,
+        createdAt: summary.createdAt,
+        remotePhotoId: summary.id,
+        objectUrl: URL.createObjectURL(blob),
+      };
+    }));
+    return { photos, error: null };
+  } catch (err) {
+    return { photos: [], error: toErrorMessage(err, 'Error al cargar las fotos de la ruta') };
   }
 }

@@ -1,10 +1,13 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import {
   uploadRouteToCloud, loadCloudRouteDetail, checkIfRouteIsSynced, autoResyncIfNeeded, uploadPhotoToCloud, deletePhotoFromCloud,
+  loadCloudRoutePhotos,
 } from './route-detail-cloud.service.js';
 import { uploadRoute, fetchCloudRouteDetail, fetchCloudRoutes, RouteCloudApiError } from '../../shared/http/route-cloud-api.service.js';
 import type * as RouteCloudApiService from '../../shared/http/route-cloud-api.service.js';
-import { uploadRoutePhoto, deleteRoutePhoto, PhotoCloudApiError } from '../../shared/http/photo-cloud-api.service.js';
+import {
+  uploadRoutePhoto, deleteRoutePhoto, listRoutePhotos, downloadRoutePhoto, PhotoCloudApiError,
+} from '../../shared/http/photo-cloud-api.service.js';
 import type * as PhotoCloudApiService from '../../shared/http/photo-cloud-api.service.js';
 import { checkAchievements } from '../../shared/http/achievement-api.service.js';
 import { readPhotoBlob } from '../../shared/services/photo-storage.service.js';
@@ -23,7 +26,9 @@ vi.mock('../../shared/http/route-cloud-api.service.js', async (importOriginal) =
 
 vi.mock('../../shared/http/photo-cloud-api.service.js', async (importOriginal) => {
   const actual = await importOriginal<typeof PhotoCloudApiService>();
-  return { ...actual, uploadRoutePhoto: vi.fn(), deleteRoutePhoto: vi.fn() };
+  return {
+    ...actual, uploadRoutePhoto: vi.fn(), deleteRoutePhoto: vi.fn(), listRoutePhotos: vi.fn(), downloadRoutePhoto: vi.fn(),
+  };
 });
 
 vi.mock('../../shared/http/achievement-api.service.js', () => ({ checkAchievements: vi.fn() }));
@@ -389,5 +394,70 @@ describe('deletePhotoFromCloud', () => {
     })).resolves.toBeUndefined();
 
     expect(showToast).toHaveBeenCalledWith(expect.stringContaining('network down'), 'error');
+  });
+});
+
+describe('loadCloudRoutePhotos', () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it('lista las fotos y descarga sus bytes en paralelo, devolviendo PhotoWithUrl[] con objectUrl', async () => {
+    vi.mocked(listRoutePhotos).mockResolvedValue([
+      { id: 'photo-1', mimeType: 'image/jpeg', latitude: 40.1, longitude: -3.1, capturedAt: '2026-08-09T10:00:00.000Z', createdAt: '2026-08-09T10:05:00.000Z' },
+    ]);
+    const blob = new Blob(['x'], { type: 'image/jpeg' });
+    vi.mocked(downloadRoutePhoto).mockResolvedValue(blob);
+    const createObjectURLMock = vi.fn().mockReturnValue('blob:mock-photo-1');
+    vi.stubGlobal('URL', Object.assign(globalThis.URL, { createObjectURL: createObjectURLMock }));
+
+    const result = await loadCloudRoutePhotos(BASE_URL, SESSION, 'route-1');
+
+    expect(listRoutePhotos).toHaveBeenCalledWith(BASE_URL, SESSION.token, 'route-1');
+    expect(downloadRoutePhoto).toHaveBeenCalledWith(BASE_URL, SESSION.token, 'route-1', 'photo-1');
+    expect(createObjectURLMock).toHaveBeenCalledWith(blob);
+    expect(result.error).toBeNull();
+    expect(result.photos).toEqual([
+      expect.objectContaining({
+        id: 'photo-1',
+        routeId: 'route-1',
+        latitude: 40.1,
+        longitude: -3.1,
+        capturedAt: '2026-08-09T10:00:00.000Z',
+        objectUrl: 'blob:mock-photo-1',
+        remotePhotoId: 'photo-1',
+      }),
+    ]);
+  });
+
+  it('una ruta sin fotos devuelve photos: [] sin error', async () => {
+    vi.mocked(listRoutePhotos).mockResolvedValue([]);
+
+    const result = await loadCloudRoutePhotos(BASE_URL, SESSION, 'route-1');
+
+    expect(result).toEqual({ photos: [], error: null });
+    expect(downloadRoutePhoto).not.toHaveBeenCalled();
+  });
+
+  it('si el listado falla, nunca lanza: devuelve photos vacías con un mensaje de error', async () => {
+    vi.mocked(listRoutePhotos).mockRejectedValue(new PhotoCloudApiError('network', 'network down'));
+
+    const result = await loadCloudRoutePhotos(BASE_URL, SESSION, 'route-1');
+
+    expect(result.photos).toEqual([]);
+    expect(result.error).toContain('network down');
+  });
+
+  it('si la descarga de alguna foto falla, nunca lanza: devuelve photos vacías con un mensaje de error', async () => {
+    vi.mocked(listRoutePhotos).mockResolvedValue([
+      { id: 'photo-1', mimeType: 'image/jpeg', latitude: null, longitude: null, capturedAt: '2026-08-09T10:00:00.000Z', createdAt: '2026-08-09T10:05:00.000Z' },
+    ]);
+    vi.mocked(downloadRoutePhoto).mockRejectedValue(new PhotoCloudApiError('network', 'network down'));
+
+    const result = await loadCloudRoutePhotos(BASE_URL, SESSION, 'route-1');
+
+    expect(result.photos).toEqual([]);
+    expect(result.error).toContain('network down');
   });
 });

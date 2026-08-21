@@ -111,3 +111,79 @@ export async function deleteRoutePhoto(apiBaseUrl: string, token: string, routeI
     throw toPhotoCloudApiError(err);
   }
 }
+
+/** Metadatos de una foto de ruta devueltos por `GET /api/routes/{id}/photos`, sin sus bytes. */
+export interface CloudPhotoSummary {
+  id: string;
+  mimeType: string;
+  latitude: number | null;
+  longitude: number | null;
+  capturedAt: string;
+  createdAt: string;
+}
+
+interface CloudPhotoSummaryResponse {
+  id: string;
+  route_id: string;
+  mime_type: string;
+  latitude: number | null;
+  longitude: number | null;
+  captured_at: string;
+  created_at: string;
+}
+
+function toCloudPhotoSummary(r: CloudPhotoSummaryResponse): CloudPhotoSummary {
+  return {
+    id: r.id,
+    mimeType: r.mime_type,
+    latitude: r.latitude,
+    longitude: r.longitude,
+    capturedAt: r.captured_at,
+    createdAt: r.created_at,
+  };
+}
+
+/**
+ * `GET /api/routes/{id}/photos` -- metadatos (sin bytes) de las fotos de una
+ * ruta de la cuenta del usuario autenticado.
+ */
+export async function listRoutePhotos(apiBaseUrl: string, token: string, routeId: string): Promise<CloudPhotoSummary[]> {
+  try {
+    const response = await fetchJson<CloudPhotoSummaryResponse[]>(`${apiBaseUrl}/api/routes/${routeId}/photos`, {
+      headers: { Authorization: `Bearer ${token}` },
+      checkStatus: true,
+    });
+    return response.map(toCloudPhotoSummary);
+  } catch (err) {
+    throw toPhotoCloudApiError(err);
+  }
+}
+
+/**
+ * `GET /api/routes/{id}/photos/{photoId}` -- descarga los bytes ya
+ * descifrados de una foto de una ruta de la cuenta del usuario autenticado.
+ * No usa `fetchJson`: la respuesta es la imagen binaria, no JSON.
+ */
+export async function downloadRoutePhoto(apiBaseUrl: string, token: string, routeId: string, photoId: string): Promise<Blob> {
+  let response: Response;
+  try {
+    response = await fetch(`${apiBaseUrl}/api/routes/${routeId}/photos/${photoId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+  } catch (err) {
+    throw new PhotoCloudApiError('network', `Network error downloading photo ${photoId} of route ${routeId}: ${String(err)}`);
+  }
+
+  if (!response.ok) {
+    let message = `Photo download failed with status ${String(response.status)}`;
+    try {
+      const body = (await response.json()) as ApiErrorBody;
+      if (body.error) message = body.error;
+    } catch {
+      // cuerpo de error no-JSON o vacío — se mantiene el mensaje genérico
+    }
+    throw new PhotoCloudApiError(mapStatus(response.status, message), message);
+  }
+
+  return response.blob();
+}

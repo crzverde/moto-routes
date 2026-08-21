@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { uploadRoutePhoto, deleteRoutePhoto, PhotoCloudApiError } from './photo-cloud-api.service.js';
+import { uploadRoutePhoto, deleteRoutePhoto, listRoutePhotos, downloadRoutePhoto, PhotoCloudApiError } from './photo-cloud-api.service.js';
 
 const BASE_URL = 'http://localhost:8080';
 const TOKEN = 'jwt-token';
@@ -109,5 +109,103 @@ describe('deleteRoutePhoto', () => {
     const promise = deleteRoutePhoto(BASE_URL, TOKEN, ROUTE_ID, 'photo-remote-1');
 
     await expect(promise).rejects.toMatchObject({ kind: 'not-found' });
+  });
+});
+
+describe('listRoutePhotos', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('llama GET al endpoint de fotos de la ruta con el Bearer del token y mapea el shape snake_case', async () => {
+    const fetchMock = stubFetch({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve([
+        { id: 'photo-1', route_id: ROUTE_ID, mime_type: 'image/jpeg', latitude: 40.1, longitude: -3.1, captured_at: '2026-08-09T10:00:00.000Z', created_at: '2026-08-09T10:05:00.000Z' },
+      ]),
+    });
+
+    const result = await listRoutePhotos(BASE_URL, TOKEN, ROUTE_ID);
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(`${BASE_URL}/api/routes/${ROUTE_ID}/photos`);
+    expect((init.headers as Record<string, string>)['Authorization']).toBe('Bearer jwt-token');
+    expect(result).toEqual([
+      { id: 'photo-1', mimeType: 'image/jpeg', latitude: 40.1, longitude: -3.1, capturedAt: '2026-08-09T10:00:00.000Z', createdAt: '2026-08-09T10:05:00.000Z' },
+    ]);
+  });
+
+  it('devuelve un array vacío cuando la ruta no tiene fotos', async () => {
+    stubFetch({ ok: true, status: 200, json: () => Promise.resolve([]) });
+
+    await expect(listRoutePhotos(BASE_URL, TOKEN, ROUTE_ID)).resolves.toEqual([]);
+  });
+
+  it('lanza PhotoCloudApiError kind "unauthorized" en 401', async () => {
+    stubFetch({ ok: false, status: 401, json: () => Promise.resolve({ error: 'missing or invalid token' }) });
+
+    const promise = listRoutePhotos(BASE_URL, TOKEN, ROUTE_ID);
+
+    await expect(promise).rejects.toMatchObject({ kind: 'unauthorized' });
+  });
+
+  it('lanza PhotoCloudApiError kind "not-found" en 404', async () => {
+    stubFetch({ ok: false, status: 404, json: () => Promise.resolve({ error: 'route not found' }) });
+
+    const promise = listRoutePhotos(BASE_URL, TOKEN, ROUTE_ID);
+
+    await expect(promise).rejects.toMatchObject({ kind: 'not-found' });
+  });
+
+  it('lanza PhotoCloudApiError kind "network" sin conexión', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network down')));
+
+    const promise = listRoutePhotos(BASE_URL, TOKEN, ROUTE_ID);
+
+    await expect(promise).rejects.toMatchObject({ kind: 'network' });
+  });
+});
+
+describe('downloadRoutePhoto', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('llama GET al endpoint de bytes de la foto con el Bearer del token y devuelve el Blob de la respuesta', async () => {
+    const blob = new Blob(['x'], { type: 'image/jpeg' });
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, blob: () => Promise.resolve(blob) });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await downloadRoutePhoto(BASE_URL, TOKEN, ROUTE_ID, 'photo-1');
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(`${BASE_URL}/api/routes/${ROUTE_ID}/photos/photo-1`);
+    expect((init.headers as Record<string, string>)['Authorization']).toBe('Bearer jwt-token');
+    expect(result).toBe(blob);
+  });
+
+  it('lanza PhotoCloudApiError kind "not-found" en 404', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 404, json: () => Promise.resolve({ error: 'photo not found' }) }));
+
+    const promise = downloadRoutePhoto(BASE_URL, TOKEN, ROUTE_ID, 'photo-1');
+
+    await expect(promise).rejects.toMatchObject({ kind: 'not-found' });
+  });
+
+  it('lanza PhotoCloudApiError kind "unauthorized" en 401', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 401, json: () => Promise.resolve({ error: 'missing or invalid token' }) }));
+
+    const promise = downloadRoutePhoto(BASE_URL, TOKEN, ROUTE_ID, 'photo-1');
+
+    await expect(promise).rejects.toMatchObject({ kind: 'unauthorized' });
+  });
+
+  it('lanza PhotoCloudApiError kind "network" sin conexión', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network down')));
+
+    const promise = downloadRoutePhoto(BASE_URL, TOKEN, ROUTE_ID, 'photo-1');
+
+    await expect(promise).rejects.toMatchObject({ kind: 'network' });
   });
 });
