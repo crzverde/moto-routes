@@ -8,28 +8,43 @@
  */
 import type { IRouteRepository } from '../../shared/models/route.repository.js';
 import type { Route } from '../../shared/models/route.types.js';
+import type { Session } from '../../shared/models/session.types.js';
 import { buildPolylineSvgPath } from './route-list.transform.js';
-import { ensurePreviewPolyline } from './route-list-polyline.service.js';
+import { ensurePreviewPolyline, ensureCloudPreviewPolyline } from './route-list-polyline.service.js';
 import type { RouteListItem } from './route-list-sync.transform.js';
 
 const THUMB_TRACE_SIZE = 72;
+
+/** Datos de sesión/API necesarios para el backfill de una tarjeta cloud-only — `null` sin sesión activa. */
+export interface CloudBackfillContext {
+  apiBaseUrl: string;
+  session: Session;
+}
 
 /**
  * Construye el `.thumb` de la tarjeta: la silueta SVG si `route` ya tiene
  * `previewPolyline` disponible, o el placeholder de franjas existente. En
  * este último caso, si la ruta aún no tiene el trazado calculado (`null`),
- * dispara el backfill perezoso en segundo plano (sin bloquear el render).
+ * dispara el backfill perezoso en segundo plano (sin bloquear el render) —
+ * contra el repositorio local para una ruta local/sincronizada, o contra la
+ * API (`ensureCloudPreviewPolyline`) para una ruta exclusiva de la nube.
  */
-export function buildThumb(item: RouteListItem, card: HTMLElement, repository: IRouteRepository | null): HTMLElement {
+export function buildThumb(
+  item: RouteListItem,
+  card: HTMLElement,
+  repository: IRouteRepository | null,
+  cloudContext: CloudBackfillContext | null = null,
+): HTMLElement {
   const { route, syncState } = item;
   const svgPath = buildPolylineSvgPath(route.previewPolyline, THUMB_TRACE_SIZE, THUMB_TRACE_SIZE);
   if (svgPath) return buildTraceThumb(svgPath);
 
-  // Una ruta exclusiva de la nube no tiene puntos locales de los que
-  // calcular el trazado — el backfill solo tiene sentido para rutas con
-  // datos en el repositorio local.
-  if (route.previewPolyline === null && syncState !== 'cloud-only') {
-    scheduleBackfill(route, card, repository);
+  if (route.previewPolyline === null) {
+    if (syncState === 'cloud-only') {
+      if (cloudContext) scheduleCloudBackfill(route, card, cloudContext);
+    } else {
+      scheduleBackfill(route, card, repository);
+    }
   }
   return buildPlaceholderThumb();
 }
@@ -79,5 +94,27 @@ function scheduleBackfill(route: Route, card: HTMLElement, repository: IRouteRep
       // Backfill best-effort: si falla, la tarjeta sigue en placeholder
       // hasta la próxima carga del listado — preview_polyline es un dato
       // derivado y recalculable, nunca la fuente de verdad.
+    });
+}
+
+/**
+ * Igual que {@link scheduleBackfill}, pero para una tarjeta cloud-only: la
+ * ruta no tiene fila local en la que persistir el resultado (ver design.md
+ * de `miniatura-listado-cloud-only`, Non-Goals) — solo se aplica en memoria
+ * sobre el `Route` sintetizado de esta tarjeta.
+ */
+function scheduleCloudBackfill(route: Route, card: HTMLElement, cloudContext: CloudBackfillContext): void {
+  void ensureCloudPreviewPolyline(cloudContext.apiBaseUrl, cloudContext.session, route)
+    .then((polyline) => {
+      if (!polyline) return;
+      route.previewPolyline = polyline;
+
+      const svgPath = buildPolylineSvgPath(polyline, THUMB_TRACE_SIZE, THUMB_TRACE_SIZE);
+      if (!svgPath) return;
+      card.querySelector('.thumb')?.replaceWith(buildTraceThumb(svgPath));
+    })
+    .catch(() => {
+      // Best-effort, mismo criterio que scheduleBackfill: un fallo deja la
+      // tarjeta en placeholder hasta la próxima carga del listado.
     });
 }

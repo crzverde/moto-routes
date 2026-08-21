@@ -3,7 +3,7 @@ import { MemoryRouteRepository } from '../../shared/repositories/memory-route.re
 import { MemorySessionRepository } from '../../shared/repositories/memory-session.repository.js';
 import type { IRouteRepository } from '../../shared/models/route.repository.js';
 import type { ISessionRepository } from '../../shared/models/session.repository.js';
-import { fetchCloudRoutes } from '../../shared/http/route-cloud-api.service.js';
+import { fetchCloudRoutes, fetchCloudRouteDetail } from '../../shared/http/route-cloud-api.service.js';
 import type * as RouteCloudApiService from '../../shared/http/route-cloud-api.service.js';
 import { autoResyncIfNeeded } from '../detail/route-detail-cloud.service.js';
 import type * as RouteDetailCloudService from '../detail/route-detail-cloud.service.js';
@@ -13,7 +13,7 @@ import './route-list.element.js';
 
 vi.mock('../../shared/http/route-cloud-api.service.js', async (importOriginal) => {
   const actual = await importOriginal<typeof RouteCloudApiService>();
-  return { ...actual, fetchCloudRoutes: vi.fn() };
+  return { ...actual, fetchCloudRoutes: vi.fn(), fetchCloudRouteDetail: vi.fn() };
 });
 
 vi.mock('../../shared/http/route-sharing-api.service.js', async (importOriginal) => {
@@ -499,6 +499,65 @@ describe('route-list - indicador de sincronización con la nube', () => {
 
     expect(root.querySelectorAll('.route-card')).toHaveLength(1);
     expect(root.querySelector('[data-cy="route-card-sync-badge"]')?.getAttribute('data-sync-state')).toBe('local');
+    document.body.removeChild(list);
+  });
+
+  it('la miniatura de una ruta exclusiva de la nube con puntos GPS sustituye el placeholder por el trazado real (spec route-cloud-sync)', async () => {
+    vi.mocked(fetchCloudRoutes).mockResolvedValue([
+      { id: 'cloud-1', createdAt: '2026-08-01T10:00:00.000Z', duration: 60, totalDistance: 5, avgSpeed: 20, status: 'completed', name: null, notes: null, isFavorite: false },
+    ]);
+    vi.mocked(fetchCloudRouteDetail).mockResolvedValue({
+      id: 'cloud-1', createdAt: '2026-08-01T10:00:00.000Z', duration: 60, totalDistance: 5, avgSpeed: 20,
+      status: 'completed', name: null, notes: null, isFavorite: false,
+      points: [
+        { timestamp: 1000, lat: 10, lng: 20, alt: 0, speed: 0 },
+        { timestamp: 2000, lat: 11, lng: 21, alt: 0, speed: 0 },
+      ],
+      stops: [],
+    });
+
+    const { list } = await createListWithSession();
+    await waitRender();
+    const thumb = list.shadowRoot!.querySelector('.thumb')!;
+
+    expect(fetchCloudRouteDetail).toHaveBeenCalledWith('http://localhost:8080', 'jwt-token', 'cloud-1');
+    expect(thumb.classList.contains('media-placeholder')).toBe(false);
+    expect(thumb.querySelector('svg path[data-cy="route-card-trace"]')).not.toBeNull();
+    document.body.removeChild(list);
+  });
+
+  it('una ruta exclusiva de la nube sin puntos GPS se queda con el placeholder, sin error (spec route-cloud-sync)', async () => {
+    vi.mocked(fetchCloudRoutes).mockResolvedValue([
+      { id: 'cloud-1', createdAt: '2026-08-01T10:00:00.000Z', duration: 60, totalDistance: 5, avgSpeed: 20, status: 'completed', name: null, notes: null, isFavorite: false },
+    ]);
+    vi.mocked(fetchCloudRouteDetail).mockResolvedValue({
+      id: 'cloud-1', createdAt: '2026-08-01T10:00:00.000Z', duration: 60, totalDistance: 5, avgSpeed: 20,
+      status: 'completed', name: null, notes: null, isFavorite: false, points: [], stops: [],
+    });
+
+    const { list } = await createListWithSession();
+    await waitRender();
+    const thumb = list.shadowRoot!.querySelector('.thumb')!;
+
+    expect(thumb.classList.contains('media-placeholder')).toBe(true);
+    document.body.removeChild(list);
+  });
+
+  it('un fallo al descargar los puntos de una ruta cloud-only deja esa tarjeta en el placeholder sin afectar al resto del listado (spec route-cloud-sync)', async () => {
+    await repo.save({ duration: 100, totalDistance: 10, avgSpeed: 50, status: 'completed', visibility: 'private', origin: 'local' }, [], []);
+    vi.mocked(fetchCloudRoutes).mockResolvedValue([
+      { id: 'cloud-1', createdAt: '2026-08-01T10:00:00.000Z', duration: 60, totalDistance: 5, avgSpeed: 20, status: 'completed', name: null, notes: null, isFavorite: false },
+    ]);
+    vi.mocked(fetchCloudRouteDetail).mockRejectedValue(new Error('network down'));
+
+    const { list } = await createListWithSession();
+    await waitRender();
+    const root = list.shadowRoot!;
+
+    expect(root.querySelectorAll('.route-card')).toHaveLength(2);
+    for (const thumb of root.querySelectorAll('.thumb')) {
+      expect(thumb.classList.contains('media-placeholder')).toBe(true);
+    }
     document.body.removeChild(list);
   });
 });

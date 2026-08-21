@@ -1,7 +1,15 @@
-import { describe, it, expect, vi } from 'vitest';
-import { ensurePreviewPolyline } from './route-list-polyline.service.js';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { ensurePreviewPolyline, ensureCloudPreviewPolyline } from './route-list-polyline.service.js';
+import { fetchCloudRouteDetail, RouteCloudApiError } from '../../shared/http/route-cloud-api.service.js';
+import type * as RouteCloudApiService from '../../shared/http/route-cloud-api.service.js';
 import type { IRouteRepository } from '../../shared/models/route.repository.js';
 import type { Route, RoutePoint } from '../../shared/models/route.types.js';
+import type { Session } from '../../shared/models/session.types.js';
+
+vi.mock('../../shared/http/route-cloud-api.service.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof RouteCloudApiService>();
+  return { ...actual, fetchCloudRouteDetail: vi.fn() };
+});
 
 function buildRoute(overrides: Partial<Route> = {}): Route {
   return {
@@ -75,5 +83,62 @@ describe('ensurePreviewPolyline (AC-031, AC-024)', () => {
 
     await expect(ensurePreviewPolyline(repo, route)).resolves.toBeNull();
     expect(repo.updatePreviewPolyline).not.toHaveBeenCalled();
+  });
+});
+
+const BASE_URL = 'http://localhost:8080';
+const SESSION: Session = { token: 'jwt-token', email: 'rider@example.com' };
+
+describe('ensureCloudPreviewPolyline', () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('descarga los puntos de la ruta vía fetchCloudRouteDetail y devuelve el trazado simplificado', async () => {
+    vi.mocked(fetchCloudRouteDetail).mockResolvedValue({
+      id: 'cloud-1', createdAt: new Date().toISOString(), duration: 100, totalDistance: 10, avgSpeed: 30,
+      status: 'completed', name: null, notes: null, isFavorite: false,
+      points: [
+        { timestamp: 1000, lat: 10, lng: 20, alt: 0, speed: 0 },
+        { timestamp: 2000, lat: 11, lng: 21, alt: 0, speed: 0 },
+      ],
+      stops: [],
+    });
+    const route = buildRoute({ id: 'cloud-1', origin: 'remote' });
+
+    const result = await ensureCloudPreviewPolyline(BASE_URL, SESSION, route);
+
+    expect(fetchCloudRouteDetail).toHaveBeenCalledWith(BASE_URL, SESSION.token, 'cloud-1');
+    expect(result).toEqual([
+      [10, 20],
+      [11, 21],
+    ]);
+  });
+
+  it('si route.previewPolyline ya está calculado, lo devuelve tal cual sin llamar a fetchCloudRouteDetail', async () => {
+    const existingPolyline: [number, number][] = [[1, 2], [3, 4]];
+    const route = buildRoute({ id: 'cloud-1', origin: 'remote', previewPolyline: existingPolyline });
+
+    const result = await ensureCloudPreviewPolyline(BASE_URL, SESSION, route);
+
+    expect(fetchCloudRouteDetail).not.toHaveBeenCalled();
+    expect(result).toEqual(existingPolyline);
+  });
+
+  it('devuelve null sin lanzar cuando la ruta no tiene ningún punto', async () => {
+    vi.mocked(fetchCloudRouteDetail).mockResolvedValue({
+      id: 'cloud-1', createdAt: new Date().toISOString(), duration: 100, totalDistance: 10, avgSpeed: 30,
+      status: 'completed', name: null, notes: null, isFavorite: false, points: [], stops: [],
+    });
+    const route = buildRoute({ id: 'cloud-1', origin: 'remote' });
+
+    await expect(ensureCloudPreviewPolyline(BASE_URL, SESSION, route)).resolves.toBeNull();
+  });
+
+  it('devuelve null sin lanzar cuando fetchCloudRouteDetail falla (red, 404)', async () => {
+    vi.mocked(fetchCloudRouteDetail).mockRejectedValue(new RouteCloudApiError('network', 'network down'));
+    const route = buildRoute({ id: 'cloud-1', origin: 'remote' });
+
+    await expect(ensureCloudPreviewPolyline(BASE_URL, SESSION, route)).resolves.toBeNull();
   });
 });

@@ -23,7 +23,7 @@ import { buildRouteCardFavoriteBadge } from './route-list-favorite.js';
 import { hasPendingReceivedInvitations } from './route-list-sharing.js';
 import { buildControlsRow, buildSearchSortRow } from './route-list-controls.js';
 import { buildListBody } from './route-list-body.js';
-import { buildThumb } from './route-list-thumb.js';
+import { buildThumb, type CloudBackfillContext } from './route-list-thumb.js';
 import type { ListControls, ListSortBy } from './route-list-filters.transform.js';
 
 const SYNC_ICON_BY_STATE: Record<RouteSyncState, string> = {
@@ -241,7 +241,10 @@ class RouteList extends BaseElement {
   private buildThumbWithBadge(item: RouteListItem, card: HTMLElement): HTMLElement {
     const wrapper = document.createElement('div');
     wrapper.className = 'thumb-wrapper';
-    wrapper.appendChild(buildThumb(item, card, this._repository));
+    const cloudContext: CloudBackfillContext | null = this._session
+      ? { apiBaseUrl: getApiBaseUrl(), session: this._session }
+      : null;
+    wrapper.appendChild(buildThumb(item, card, this._repository, cloudContext));
     if (this._repository) {
       wrapper.appendChild(buildRouteCardFavoriteBadge({
         repository: this._repository,
